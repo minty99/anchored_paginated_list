@@ -1,3 +1,4 @@
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:super_sliver_list/super_sliver_list.dart';
 
@@ -27,15 +28,33 @@ import 'typedefs.dart';
 class AnchoredPaginatedListController extends ChangeNotifier {
   ListController? _listController;
   ScrollController? _scrollController;
+  bool _disposed = false;
 
   /// Internally maintained by the widget — items + key provider for
   /// key-based lookups.
   List<dynamic> _items = const [];
   ItemKeyProvider<dynamic>? _itemKeyProvider;
 
+  // ── Pending jump state ──────────────────────────────────────────────
+  //
+  // When [jumpToKey] or [animateToKey] is called with `retryIfMissing`
+  // and the key is not found, a pending jump is stored. On the next
+  // [updateItems] call that contains the key, the jump is automatically
+  // executed. A new [jumpToKey] / [animateToKey] / [cancelPendingJump]
+  // call cancels any previous pending jump via the sequence counter.
+  dynamic _pendingKey;
+  ListItemAlignment _pendingAlignment = ListItemAlignment.top;
+  bool _pendingAnimate = false;
+  Duration Function(double)? _pendingAnimateDuration;
+  Curve Function(double)? _pendingAnimateCurve;
+  int _pendingSequence = 0;
+
   /// Whether this controller is currently attached to a
   /// [AnchoredPaginatedList].
   bool get isAttached => _listController != null && _scrollController != null;
+
+  /// Whether there is a pending jump waiting for items to update.
+  bool get hasPendingJump => _pendingKey != null;
 
   /// Immediately jumps to the item at [index].
   ///
@@ -52,6 +71,7 @@ class AnchoredPaginatedListController extends ChangeNotifier {
     ListItemAlignment alignment = ListItemAlignment.top,
   }) {
     _assertAttached();
+    _clearPending();
     _listController!.jumpToItem(
       index: index,
       scrollController: _scrollController!,
@@ -69,26 +89,54 @@ class AnchoredPaginatedListController extends ChangeNotifier {
   /// Returns `true` if the item was found and the jump was performed,
   /// `false` if the key was not found in the current items list.
   ///
-  /// Example — windowed search:
-  /// ```dart
-  /// // 1. Replace items with a window around the target.
-  /// setState(() { items = await loadWindow(targetId); });
+  /// When [retryIfMissing] is `true` and the key is not found, the jump
+  /// is stored as pending and resolved automatically when:
+  /// - The widget rebuilds with new items containing the key
+  ///   (via [updateItems]), or
+  /// - The key appears in the items within the next two frames
+  ///   (for same-cycle state changes).
   ///
-  /// // 2. Jump by key — no index calculation needed.
-  /// WidgetsBinding.instance.addPostFrameCallback((_) {
-  ///   controller.jumpToKey(
-  ///     key: targetId,
-  ///     alignment: ListItemAlignment.center,
-  ///   );
-  /// });
+  /// A new [jumpToKey] or [animateToKey] call cancels any previously
+  /// pending jump.
+  ///
+  /// Example — paginated search:
+  /// ```dart
+  /// // 1. Start loading the target item in the background.
+  /// cubit.loadUntilFound(targetId);
+  ///
+  /// // 2. Jump by key — resolves automatically when the item is loaded.
+  /// controller.jumpToKey(
+  ///   key: targetId,
+  ///   alignment: ListItemAlignment.center,
+  ///   retryIfMissing: true,
+  /// );
   /// ```
   bool jumpToKey({
     required dynamic key,
     ListItemAlignment alignment = ListItemAlignment.top,
+    bool retryIfMissing = false,
   }) {
     _assertAttached();
+    _clearPending();
+
     final index = _findIndexByKey(key);
-    if (index == -1) return false;
+    if (index == -1) {
+      if (retryIfMissing) {
+        _setPendingJump(key: key, alignment: alignment);
+        _scheduleRetry(() {
+          if (_pendingKey != key) return;
+          final retryIndex = _findIndexByKey(key);
+          if (retryIndex == -1) return;
+          _clearPending();
+          _listController?.jumpToItem(
+            index: retryIndex,
+            scrollController: _scrollController!,
+            alignment: alignment.value,
+          );
+        });
+      }
+      return false;
+    }
     _listController!.jumpToItem(
       index: index,
       scrollController: _scrollController!,
@@ -112,6 +160,7 @@ class AnchoredPaginatedListController extends ChangeNotifier {
     Curve Function(double estimatedDistance)? curve,
   }) {
     _assertAttached();
+    _clearPending();
     _listController!.animateToItem(
       index: index,
       scrollController: _scrollController!,
@@ -125,15 +174,48 @@ class AnchoredPaginatedListController extends ChangeNotifier {
   ///
   /// Returns `true` if the item was found and the animation started,
   /// `false` if the key was not found.
+  ///
+  /// When [retryIfMissing] is `true` and the key is not found, the
+  /// animation is stored as pending and resolved on the next
+  /// [updateItems] call that contains the key. See [jumpToKey] for
+  /// details on the pending mechanism.
   bool animateToKey({
     required dynamic key,
     ListItemAlignment alignment = ListItemAlignment.top,
     Duration Function(double estimatedDistance)? duration,
     Curve Function(double estimatedDistance)? curve,
+    bool retryIfMissing = false,
   }) {
     _assertAttached();
+    _clearPending();
+
     final index = _findIndexByKey(key);
-    if (index == -1) return false;
+    if (index == -1) {
+      if (retryIfMissing) {
+        _setPendingAnimate(
+          key: key,
+          alignment: alignment,
+          duration: duration,
+          curve: curve,
+        );
+        _scheduleRetry(() {
+          if (_pendingKey != key) return;
+          final retryIndex = _findIndexByKey(key);
+          if (retryIndex == -1) return;
+          final d = _pendingAnimateDuration;
+          final c = _pendingAnimateCurve;
+          _clearPending();
+          _listController?.animateToItem(
+            index: retryIndex,
+            scrollController: _scrollController!,
+            alignment: alignment.value,
+            duration: d ?? (_) => const Duration(milliseconds: 300),
+            curve: c ?? (_) => Curves.easeInOut,
+          );
+        });
+      }
+      return false;
+    }
     _listController!.animateToItem(
       index: index,
       scrollController: _scrollController!,
@@ -142,6 +224,12 @@ class AnchoredPaginatedListController extends ChangeNotifier {
       curve: curve ?? (_) => Curves.easeInOut,
     );
     return true;
+  }
+
+  /// Cancels any pending jump or animation that was scheduled via
+  /// [jumpToKey] or [animateToKey] with `retryIfMissing: true`.
+  void cancelPendingJump() {
+    _clearPending();
   }
 
   /// Returns the range of currently visible item indices, or `null` if
@@ -163,18 +251,124 @@ class AnchoredPaginatedListController extends ChangeNotifier {
 
   /// Called internally by the widget to update the items snapshot and
   /// key provider, so that [jumpToKey] / [animateToKey] can resolve keys.
-  void updateItems(List<dynamic> items, ItemKeyProvider<dynamic> keyProvider) {
+  ///
+  /// If a pending jump is active and the new items contain the target
+  /// key, the jump is resolved automatically after the current frame.
+  ///
+  /// Returns `true` if a pending jump was resolved by this call, meaning
+  /// the caller should skip automatic scroll anchoring (the explicit jump
+  /// takes priority).
+  bool updateItems(List<dynamic> items, ItemKeyProvider<dynamic> keyProvider) {
     _items = items;
     _itemKeyProvider = keyProvider;
+    return _tryResolvePending();
   }
 
   /// Called internally by the widget to detach controllers.
+  ///
+  /// Safe to call even after [dispose] — the call is silently ignored
+  /// if the controller has already been disposed.
   void detach() {
     _listController = null;
     _scrollController = null;
     _items = const [];
     _itemKeyProvider = null;
-    notifyListeners();
+    _clearPending();
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
+  // ── Pending jump internals ────────────────────────────────────────
+
+  void _setPendingJump({
+    required dynamic key,
+    required ListItemAlignment alignment,
+  }) {
+    _pendingKey = key;
+    _pendingAlignment = alignment;
+    _pendingAnimate = false;
+    _pendingAnimateDuration = null;
+    _pendingAnimateCurve = null;
+    _pendingSequence++;
+  }
+
+  void _setPendingAnimate({
+    required dynamic key,
+    required ListItemAlignment alignment,
+    Duration Function(double)? duration,
+    Curve Function(double)? curve,
+  }) {
+    _pendingKey = key;
+    _pendingAlignment = alignment;
+    _pendingAnimate = true;
+    _pendingAnimateDuration = duration;
+    _pendingAnimateCurve = curve;
+    _pendingSequence++;
+  }
+
+  void _clearPending() {
+    _pendingKey = null;
+    _pendingSequence++;
+  }
+
+  /// Called from [updateItems] — if a pending key is found in the
+  /// updated items, schedules the jump/animation for the next frame
+  /// (after layout is complete).
+  ///
+  /// Returns `true` if a pending jump was resolved.
+  bool _tryResolvePending() {
+    final key = _pendingKey;
+    if (key == null || !isAttached) return false;
+
+    final index = _findIndexByKey(key);
+    if (index == -1) return false;
+
+    final alignment = _pendingAlignment;
+    final animate = _pendingAnimate;
+    final duration = _pendingAnimateDuration;
+    final curve = _pendingAnimateCurve;
+    final seq = _pendingSequence;
+    _clearPending();
+
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || !isAttached) return;
+      // Bail if a newer jump was requested during the frame.
+      if (_pendingSequence != seq + 1) return;
+
+      final currentIndex = _findIndexByKey(key);
+      if (currentIndex == -1) return;
+
+      if (animate) {
+        _listController!.animateToItem(
+          index: currentIndex,
+          scrollController: _scrollController!,
+          alignment: alignment.value,
+          duration: duration ?? (_) => const Duration(milliseconds: 300),
+          curve: curve ?? (_) => Curves.easeInOut,
+        );
+      } else {
+        _listController!.jumpToItem(
+          index: currentIndex,
+          scrollController: _scrollController!,
+          alignment: alignment.value,
+        );
+      }
+    });
+    return true;
+  }
+
+  /// Schedules [action] to run after two frames, giving the widget tree time
+  /// to rebuild (frame 1 — `didUpdateWidget` calls `updateItems`) and lay out
+  /// (frame 2 — items are fully rendered and scrollable).
+  void _scheduleRetry(VoidCallback action) {
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || !isAttached) return;
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (_disposed || !isAttached) return;
+        action();
+      });
+    });
   }
 
   int _findIndexByKey(dynamic key) {
@@ -202,10 +396,12 @@ class AnchoredPaginatedListController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _listController = null;
     _scrollController = null;
     _items = const [];
     _itemKeyProvider = null;
+    _pendingKey = null;
     super.dispose();
   }
 }

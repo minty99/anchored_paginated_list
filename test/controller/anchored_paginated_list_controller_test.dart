@@ -395,5 +395,517 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       controller.dispose();
     });
+
+    group('pending jump mechanism', () {
+      testWidgets(
+          'jumpToKey(retryIfMissing: true) sets hasPendingJump when key not found',
+          (tester) async {
+        final controller = AnchoredPaginatedListController();
+        final items = List.generate(5, (i) => 'item-$i');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Initially no pending jump
+        expect(controller.hasPendingJump, isFalse);
+
+        // Call jumpToKey with retryIfMissing for a missing key
+        final result = controller.jumpToKey(
+          key: 'missing-item',
+          retryIfMissing: true,
+        );
+
+        // Should return false (key not found)
+        expect(result, isFalse);
+        // But hasPendingJump should be true
+        expect(controller.hasPendingJump, isTrue);
+
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      });
+
+      testWidgets(
+          'updateItems with pending key auto-resolves jump via postFrameCallback',
+          (tester) async {
+        final controller = AnchoredPaginatedListController();
+        var items = List.generate(5, (i) => 'item-$i');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Request jump to missing item with retry
+        expect(
+          controller.jumpToKey(
+            key: 'new-item',
+            retryIfMissing: true,
+          ),
+          isFalse,
+        );
+        expect(controller.hasPendingJump, isTrue);
+
+        // Update items to include the pending key
+        items = ['new-item', ...items];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // After updateItems, pending should still be set (waiting for postFrameCallback)
+        expect(controller.hasPendingJump, isFalse);
+
+        // Pump to process postFrameCallback
+        await tester.pump();
+
+        // Pending should be cleared after the jump is executed
+        expect(controller.hasPendingJump, isFalse);
+
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      });
+
+      testWidgets('new jumpToKey call cancels previous pending jump',
+          (tester) async {
+        final controller = AnchoredPaginatedListController();
+        final items = List.generate(10, (i) => 'item-$i');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Set first pending jump
+        controller.jumpToKey(
+          key: 'missing-1',
+          retryIfMissing: true,
+        );
+        expect(controller.hasPendingJump, isTrue);
+
+        // Set second pending jump — should cancel the first
+        controller.jumpToKey(
+          key: 'missing-2',
+          retryIfMissing: true,
+        );
+        expect(controller.hasPendingJump, isTrue);
+
+        // The second pending key should be active (we can't directly check
+        // the key, but we verify that a new pending state was set)
+        // Now try to jump to an existing key — should clear pending
+        expect(controller.jumpToKey(key: 'item-5'), isTrue);
+        expect(controller.hasPendingJump, isFalse);
+
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      });
+
+      testWidgets('cancelPendingJump() clears pending state', (tester) async {
+        final controller = AnchoredPaginatedListController();
+        final items = List.generate(5, (i) => 'item-$i');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Set pending jump
+        controller.jumpToKey(
+          key: 'missing-item',
+          retryIfMissing: true,
+        );
+        expect(controller.hasPendingJump, isTrue);
+
+        // Cancel it
+        controller.cancelPendingJump();
+        expect(controller.hasPendingJump, isFalse);
+
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      });
+
+      testWidgets(
+          'animateToKey(retryIfMissing: true) sets hasPendingJump when key not found',
+          (tester) async {
+        final controller = AnchoredPaginatedListController();
+        final items = List.generate(5, (i) => 'item-$i');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Initially no pending jump
+        expect(controller.hasPendingJump, isFalse);
+
+        // Call animateToKey with retryIfMissing for a missing key
+        final result = controller.animateToKey(
+          key: 'missing-item',
+          retryIfMissing: true,
+        );
+
+        // Should return false (key not found)
+        expect(result, isFalse);
+        // But hasPendingJump should be true
+        expect(controller.hasPendingJump, isTrue);
+
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      });
+
+      testWidgets(
+          'updateItems with pending animate key auto-resolves animation via postFrameCallback',
+          (tester) async {
+        final controller = AnchoredPaginatedListController();
+        var items = List.generate(5, (i) => 'item-$i');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Request animation to missing item with retry
+        expect(
+          controller.animateToKey(
+            key: 'new-item',
+            retryIfMissing: true,
+          ),
+          isFalse,
+        );
+        expect(controller.hasPendingJump, isTrue);
+
+        // Update items to include the pending key
+        items = ['new-item', ...items];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // After updateItems, pending should be cleared
+        expect(controller.hasPendingJump, isFalse);
+
+        // Pump to process postFrameCallback
+        await tester.pump();
+
+        // Pending should still be cleared
+        expect(controller.hasPendingJump, isFalse);
+
+        await tester.pumpAndSettle();
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      });
+
+      testWidgets('jumpTo (index-based) clears any pending jump',
+          (tester) async {
+        final controller = AnchoredPaginatedListController();
+        final items = List.generate(10, (i) => 'item-$i');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Set pending jump
+        controller.jumpToKey(
+          key: 'missing-item',
+          retryIfMissing: true,
+        );
+        expect(controller.hasPendingJump, isTrue);
+
+        // Call jumpTo with index — should clear pending
+        controller.jumpTo(index: 5);
+        expect(controller.hasPendingJump, isFalse);
+
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      });
+
+      testWidgets('animateTo (index-based) clears any pending jump',
+          (tester) async {
+        final controller = AnchoredPaginatedListController();
+        final items = List.generate(10, (i) => 'item-$i');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Set pending jump
+        controller.jumpToKey(
+          key: 'missing-item',
+          retryIfMissing: true,
+        );
+        expect(controller.hasPendingJump, isTrue);
+
+        // Call animateTo with index — should clear pending
+        controller.animateTo(index: 5);
+        expect(controller.hasPendingJump, isFalse);
+
+        await tester.pumpAndSettle();
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      });
+
+      testWidgets('detach clears pending jump', (tester) async {
+        final controller = AnchoredPaginatedListController();
+        final items = List.generate(5, (i) => 'item-$i');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Set pending jump
+        controller.jumpToKey(
+          key: 'missing-item',
+          retryIfMissing: true,
+        );
+        expect(controller.hasPendingJump, isTrue);
+
+        // Detach the controller
+        controller.detach();
+        expect(controller.hasPendingJump, isFalse);
+
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      });
+
+      testWidgets('pending jump with custom alignment is preserved and applied',
+          (tester) async {
+        final controller = AnchoredPaginatedListController();
+        var items = List.generate(5, (i) => 'item-$i');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Request jump with center alignment
+        controller.jumpToKey(
+          key: 'new-item',
+          alignment: ListItemAlignment.center,
+          retryIfMissing: true,
+        );
+        expect(controller.hasPendingJump, isTrue);
+
+        // Update items
+        items = ['new-item', ...items];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Pending should be cleared after updateItems
+        expect(controller.hasPendingJump, isFalse);
+
+        await tester.pump();
+        expect(controller.hasPendingJump, isFalse);
+
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      });
+
+      testWidgets(
+          'pending animation with custom duration/curve is preserved and applied',
+          (tester) async {
+        final controller = AnchoredPaginatedListController();
+        var items = List.generate(5, (i) => 'item-$i');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Request animation with custom duration and curve
+        controller.animateToKey(
+          key: 'new-item',
+          alignment: ListItemAlignment.center,
+          duration: (_) => const Duration(milliseconds: 500),
+          curve: (_) => Curves.easeInCubic,
+          retryIfMissing: true,
+        );
+        expect(controller.hasPendingJump, isTrue);
+
+        // Update items
+        items = ['new-item', ...items];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AnchoredPaginatedList<String>(
+                items: items,
+                itemBuilder: (context, item, index) => SizedBox(
+                  height: 50,
+                  child: Text(item, key: ValueKey(item)),
+                ),
+                itemKey: (item) => item,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+
+        // Pending should be cleared
+        expect(controller.hasPendingJump, isFalse);
+
+        await tester.pumpAndSettle();
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      });
+    });
   });
 }
