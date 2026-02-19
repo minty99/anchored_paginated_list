@@ -22,7 +22,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Nothing here'), findsOneWidget);
-      expect(find.byType(CustomScrollView), findsNothing);
+      // Empty state is rendered inside CustomScrollView (via SliverFillRemaining)
+      // so that the scrollController remains attached.
+      expect(find.byType(CustomScrollView), findsOneWidget);
     });
 
     testWidgets('shows default empty placeholder when emptyBuilder is absent',
@@ -38,8 +40,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byType(CustomScrollView), findsNothing);
-      expect(find.byType(SizedBox), findsAtLeastNWidgets(1));
+      // Default empty state (SizedBox.shrink) is rendered inside CustomScrollView.
+      expect(find.byType(CustomScrollView), findsOneWidget);
     });
 
     testWidgets('shows custom forward loading indicator while loading',

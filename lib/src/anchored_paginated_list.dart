@@ -190,11 +190,14 @@ class _AnchoredPaginatedListState<T> extends State<AnchoredPaginatedList<T>> {
       widget.controller?.attach(_listController, _scrollController);
     }
 
-    // Keep controller's item snapshot current for jumpToKey / animateToKey
-    widget.controller?.updateItems(
-      widget.items,
-      (dynamic item) => widget.itemKey(item as T),
-    );
+    // Keep controller's item snapshot current for jumpToKey / animateToKey.
+    // If a pending jump was resolved, skip scroll anchoring below — the
+    // explicit jump takes priority over automatic anchor preservation.
+    final pendingJumpResolved = widget.controller?.updateItems(
+          widget.items,
+          (dynamic item) => widget.itemKey(item as T),
+        ) ??
+        false;
 
     // Handle scroll controller changes
     if (widget.scrollController != oldWidget.scrollController) {
@@ -213,8 +216,10 @@ class _AnchoredPaginatedListState<T> extends State<AnchoredPaginatedList<T>> {
       widget.controller?.attach(_listController, _scrollController);
     }
 
-    // Detect prepend and perform scroll anchoring
-    if (!identical(widget.items, oldWidget.items) &&
+    // Detect prepend and perform scroll anchoring (skipped when an
+    // explicit pending jump was just resolved).
+    if (!pendingJumpResolved &&
+        !identical(widget.items, oldWidget.items) &&
         widget.items.length != _previousItems.length) {
       final prependCount = _anchorManager.detectPrependCount(
         oldItems: _previousItems,
@@ -354,11 +359,23 @@ class _AnchoredPaginatedListState<T> extends State<AnchoredPaginatedList<T>> {
 
   @override
   Widget build(BuildContext context) {
-    // Empty state
+    // Empty state — still render inside CustomScrollView so that
+    // the scrollController remains attached and usable by callers.
     if (widget.items.isEmpty &&
         !_paginationState.isLoadingForward &&
         !_paginationState.isLoadingBackward) {
-      return widget.emptyBuilder?.call(context) ?? const SizedBox.shrink();
+      return CustomScrollView(
+        controller: _scrollController,
+        reverse: widget.reverse,
+        physics: widget.physics,
+        slivers: [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child:
+                widget.emptyBuilder?.call(context) ?? const SizedBox.shrink(),
+          ),
+        ],
+      );
     }
 
     return CustomScrollView(
