@@ -1,0 +1,20 @@
+# Dart/Flutter
+.dart_tool/
+.packages
+pubspec.lock
+
+# Build outputs
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/

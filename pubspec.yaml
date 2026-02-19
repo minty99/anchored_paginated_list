@@ -1,0 +1,22 @@
+name: anchored_paginated_list
+description: A high-performance paginated list widget for Flutter with bidirectional pagination, scroll anchoring, and key-based navigation.
+version: 0.1.0
+homepage: https://github.com/minty99/anchored_paginated_list
+repository: https://github.com/minty99/anchored_paginated_list
+issue_tracker: https://github.com/minty99/anchored_paginated_list/issues
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  super_sliver_list: ^0.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
