@@ -30,6 +30,24 @@ class AnchoredPaginatedListController extends ChangeNotifier {
   ScrollController? _scrollController;
   bool _disposed = false;
 
+  /// Whether the list is currently scrolled to the bottom.
+  ///
+  /// For reversed lists (e.g., chat), "bottom" means the visual bottom
+  /// (lowest scroll offset — newest messages). For non-reversed lists,
+  /// "bottom" means the visual bottom (highest scroll offset).
+  ///
+  /// Updated automatically by the [AnchoredPaginatedList] widget's
+  /// scroll listener based on the configured `bottomThreshold`.
+  ///
+  /// Defaults to `true` (assumes the list starts at the bottom).
+  bool _isAtBottom = true;
+
+  /// Whether the list is currently scrolled to the bottom.
+  ///
+  /// See [_isAtBottom] for details on what "bottom" means in reversed
+  /// vs. non-reversed lists.
+  bool get isAtBottom => _isAtBottom;
+
   /// Internally maintained by the widget — items + key provider for
   /// key-based lookups.
   List<dynamic> _items = const [];
@@ -277,6 +295,18 @@ class AnchoredPaginatedListController extends ChangeNotifier {
     if (!_disposed) {
       notifyListeners();
     }
+  }
+
+  // ── isAtBottom (updated by widget) ─────────────────────────────────
+
+  /// Called internally by the widget to update the [isAtBottom] flag.
+  ///
+  /// Returns `true` if the value changed.
+  bool setIsAtBottom(bool value) {
+    if (_isAtBottom == value) return false;
+    _isAtBottom = value;
+    notifyListeners();
+    return true;
   }
 
   // ── Pending jump internals ────────────────────────────────────────

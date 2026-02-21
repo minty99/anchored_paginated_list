@@ -49,6 +49,7 @@ class AnchoredPaginatedList<T> extends StatefulWidget {
     this.hasMoreForward = false,
     this.hasMoreBackward = false,
     this.loadMoreThreshold = 250.0,
+    this.bottomThreshold = 150.0,
     this.controller,
     this.scrollController,
     this.reverse = false,
@@ -58,6 +59,7 @@ class AnchoredPaginatedList<T> extends StatefulWidget {
     this.errorBuilder,
     this.emptyBuilder,
     this.estimateExtent,
+    this.onIsAtBottomChanged,
   });
 
   /// The list of items to display.
@@ -93,6 +95,15 @@ class AnchoredPaginatedList<T> extends StatefulWidget {
   ///
   /// Defaults to 250.0 pixels.
   final double loadMoreThreshold;
+
+  /// The distance in pixels from the bottom edge at which the list is
+  /// considered "at the bottom".
+  ///
+  /// For reversed lists, this is measured from `offset == 0` (the visual
+  /// bottom). For non-reversed lists, from `maxScrollExtent`.
+  ///
+  /// Defaults to 150.0 pixels.
+  final double bottomThreshold;
 
   /// An optional controller for programmatic scrolling (jump/animate).
   final AnchoredPaginatedListController? controller;
@@ -138,6 +149,16 @@ class AnchoredPaginatedList<T> extends StatefulWidget {
   /// items are laid out.
   final double Function(int index)? estimateExtent;
 
+  /// Called when the list crosses the [bottomThreshold] boundary.
+  ///
+  /// For reversed lists, "at bottom" means the scroll offset is near 0
+  /// (the visual bottom showing newest items). For non-reversed lists,
+  /// "at bottom" means near `maxScrollExtent`.
+  ///
+  /// Also updates [AnchoredPaginatedListController.isAtBottom] when
+  /// a controller is attached.
+  final ValueChanged<bool>? onIsAtBottomChanged;
+
   @override
   State<AnchoredPaginatedList<T>> createState() =>
       _AnchoredPaginatedListState<T>();
@@ -150,6 +171,7 @@ class _AnchoredPaginatedListState<T> extends State<AnchoredPaginatedList<T>> {
 
   bool _ownsScrollController = false;
   bool _anchorRestorePending = false;
+  bool _wasAtBottom = true;
 
   PaginationState _paginationState = const PaginationState();
 
@@ -300,26 +322,40 @@ class _AnchoredPaginatedListState<T> extends State<AnchoredPaginatedList<T>> {
   }
 
   void _onScroll() {
-    if (widget.onLoadMore == null) return;
     if (!_scrollController.hasClients) return;
 
     final position = _scrollController.position;
     final pixels = position.pixels;
     final maxExtent = position.maxScrollExtent;
     final minExtent = position.minScrollExtent;
-    final threshold = widget.loadMoreThreshold;
+
+    // ── isAtBottom tracking ──────────────────────────────────────────
+    final isAtBottom = widget.reverse
+        ? pixels <= minExtent + widget.bottomThreshold
+        : pixels >= maxExtent - widget.bottomThreshold;
+
+    if (isAtBottom != _wasAtBottom) {
+      _wasAtBottom = isAtBottom;
+      widget.controller?.setIsAtBottom(isAtBottom);
+      widget.onIsAtBottomChanged?.call(isAtBottom);
+    }
+
+    // ── Pagination ───────────────────────────────────────────────────
+    if (widget.onLoadMore == null) return;
+
+    final loadThreshold = widget.loadMoreThreshold;
 
     // Forward: near the end of the list
     if (widget.hasMoreForward &&
         !_paginationState.isLoadingForward &&
-        pixels >= maxExtent - threshold) {
+        pixels >= maxExtent - loadThreshold) {
       _triggerLoad(LoadDirection.forward);
     }
 
     // Backward: near the start of the list
     if (widget.hasMoreBackward &&
         !_paginationState.isLoadingBackward &&
-        pixels <= minExtent + threshold) {
+        pixels <= minExtent + loadThreshold) {
       _triggerLoad(LoadDirection.backward);
     }
   }

@@ -261,6 +261,44 @@ void main() {
         scrollController.dispose();
       });
     });
+
+    group('isAtBottom tracking', () {
+      test('isAtBottom defaults to true', () {
+        expect(controller.isAtBottom, isTrue);
+      });
+
+      test('setIsAtBottom(false) changes value and returns true', () {
+        expect(controller.isAtBottom, isTrue);
+        final changed = controller.setIsAtBottom(false);
+        expect(changed, isTrue);
+        expect(controller.isAtBottom, isFalse);
+      });
+
+      test('setIsAtBottom(same value) returns false (no-op)', () {
+        controller.setIsAtBottom(false);
+        final changed = controller.setIsAtBottom(false);
+        expect(changed, isFalse);
+        expect(controller.isAtBottom, isFalse);
+      });
+
+      test('setIsAtBottom calls notifyListeners', () {
+        var notified = false;
+        controller.addListener(() => notified = true);
+
+        controller.setIsAtBottom(false);
+        expect(notified, isTrue);
+      });
+
+      test('setIsAtBottom does not notify when value unchanged', () {
+        controller.setIsAtBottom(false);
+
+        var notified = false;
+        controller.addListener(() => notified = true);
+
+        controller.setIsAtBottom(false);
+        expect(notified, isFalse);
+      });
+    });
   });
 
   group('jumpToKey / animateToKey with widget', () {
